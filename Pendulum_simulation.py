@@ -6,7 +6,7 @@ import matplotlib.patches as patches
 import os
 
 # === HIER ANPASSEN ===
-CSV_PATH = "C:/Users/timei/Desktop/Python Skripte/data/sim_0010.csv"
+CSV_PATH = "C:/Users/timei/Desktop/Python Skripte/Case_Study/data/sim_0010.csv"
 L1 = 1.0   # Länge der ersten Stange
 L2 = 1.0   # Länge der zweiten Stange
 INTERVAL_MS = 20  # Frame-Intervall in ms
