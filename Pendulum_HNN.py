@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 import subprocess
 import math
+import matplotlib.animation as animation
 
 
 # === EIGENE EINSTELLUNGEN ===
@@ -81,7 +82,10 @@ def train(model, data, writer):
             batch = train_data[i:i+BATCH_SIZE]
 
             # true_deriv hier ersetzen durch deine Finite-Differences
-            true_deriv = torch.zeros_like(batch)
+            # Wenn dein Datensatz nacheinander sortierte Zeitpunkte enthält:
+            dt = 0.02  # Beispiel-Zeitschritt
+            true_deriv = torch.zeros_like(pred)
+
 
             pred = model(batch)
             loss = loss_fn(pred, true_deriv)
@@ -104,44 +108,30 @@ def train(model, data, writer):
         print(f"Finished epoch {epoch}/{EPOCHS} — train_loss: {avg_loss:.4e}, test_loss: {test_loss:.4e}")
 
     print(f"Total training steps: {global_step}")
+    torch.save(model.state_dict(), "hnn_model.pth")
+
     writer.close()
 
 
 def simulate_hnn(model, y0, t_max=20, dt=0.02):
-    """
-    Simuliert das Doppelpendel mit dem gelernten HNN.
-    Dabei wird für jeden Zeitschritt die Gradienten-basierte
-    Vorhersage dy = f(y) berechnet und dann detached.
-    
-    Args:
-        model: Dein trainiertes HNN-Modell.
-        y0:    Startzustand [q1, p1, q2, p2].
-        t_max: Simulationsdauer in Sekunden.
-        dt:    Zeitschritt.
-        
-    Returns:
-        np.ndarray mit Form [T, 4], T = Anzahl Zeitschritte,
-        Zustände [q1, p1, q2, p2].
-    """
     times = np.arange(0, t_max, dt)
-    # Initialer Zustand als Tensor, mit Gradient aktiviert
-    y = torch.tensor(y0, dtype=torch.float32, requires_grad=True)
+    y = torch.tensor(y0, dtype=torch.float32).unsqueeze(0)  # shape: [1, 4]
+    y.requires_grad_(True)  # wichtig für .grad()
+
     traj = [y0]
 
     for _ in times[1:]:
-        # Gradient-basierten Vorhersage-Schritt durchführen
-        dy = model(y)                   # liefert Tensor mit requires_grad=True
-        dy_np = dy.detach().numpy()     # Gradienten-Graph hier trennen
-        
-        # Euler-Update im NumPy-Land
-        y_next = traj[-1] + dt * dy_np
-        
-        # Neuen Tensor bauen – wieder mit requires_grad für next forward
-        y = torch.tensor(y_next, dtype=torch.float32, requires_grad=True)
-        
-        traj.append(y_next)
+        dy = model(y)  # erwartet y mit shape [1, 4], gibt auch [1, 4] zurück
+
+        # Sicherstellen, dass dy nicht die Graph-Verfolgung fortsetzt
+        dy = dy.detach()
+
+        y = y + dy * dt  # Euler-Schritt
+        y.retain_grad()  # falls nötig
+        traj.append(y.squeeze(0).detach().numpy())
 
     return np.array(traj)
+
 
 def plot_trajectory(traj):
     L1, L2 = 1.0, 1.0
@@ -153,6 +143,47 @@ def plot_trajectory(traj):
     plt.plot(x2, y2, lw=1)
     plt.title("HNN-Predicted Double Pendulum Trajectory")
     plt.axis('equal')
+    plt.show()
+
+def animate_double_pendulum(traj, interval=30, save=False):
+    L1, L2 = 1.0, 1.0
+    θ1, θ2 = traj[:, 0], traj[:, 2]
+
+    x1 = L1 * np.sin(θ1)
+    y1 = -L1 * np.cos(θ1)
+    x2 = x1 + L2 * np.sin(θ2)
+    y2 = y1 - L2 * np.cos(θ2)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.set_xlim(-2.2, 2.2)
+    ax.set_ylim(-2.2, 2.2)
+    ax.set_aspect('equal')
+    ax.set_title("Double Pendulum Simulation (HNN)")
+
+    line, = ax.plot([], [], 'o-', lw=2, color='royalblue')
+    trail, = ax.plot([], [], '-', lw=1, color='lightblue', alpha=0.6)
+    trail_x, trail_y = [], []
+
+    def init():
+        line.set_data([], [])
+        trail.set_data([], [])
+        return line, trail
+
+    def update(frame):
+        trail_x.append(x2[frame])
+        trail_y.append(y2[frame])
+        line.set_data([0, x1[frame], x2[frame]], [0, y1[frame], y2[frame]])
+        trail.set_data(trail_x, trail_y)
+        return line, trail
+
+    ani = animation.FuncAnimation(
+        fig, update, frames=len(θ1), init_func=init,
+        interval=interval, blit=True, repeat=False
+    )
+
+    if save:
+        ani.save("double_pendulum_simulation.mp4", fps=30, dpi=200)
+
     plt.show()
 
 if __name__ == "__main__":
@@ -173,8 +204,10 @@ if __name__ == "__main__":
     train(model, data, writer)
 
     # 4) Simulation & Plot
-    traj = simulate_hnn(model, [np.pi/2,0,np.pi/2+0.01,0])
+    traj = simulate_hnn(model, [np.pi/2, 0, np.pi/2 + 0.01, 0])
     plot_trajectory(traj)
+    animate_double_pendulum(traj)
+
 
     # 5) TensorBoard beenden
     proc.terminate()
